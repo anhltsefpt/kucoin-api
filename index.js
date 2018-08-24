@@ -193,48 +193,191 @@ class Kucoin {
     return this.doSignedRequest('get', '/account/' + params.symbol + '/wallet/records', params)
   }
 
-  getDepositsByCurrency(currency) {
-    return this.getDepositAndWithdrawalRecords({symbol : currency, type: 'WITHDRAW', status: 'FINISHED'})
+  getDepositsByCurrency(currency, pageNumber) {
+    return this.getDepositAndWithdrawalRecords({ symbol: currency, type: 'DEPOSIT', page: pageNumber })
+    // return this.getDepositAndWithdrawalRecords({symbol : currency})
+
   }
 
   getListDeposits(listCurrencies) {
     const depositTasks = []
     listCurrencies.forEach((currency) => {
-      depositTasks.push(( async () => {
-        const depositByCurrency = await this.getDepositsByCurrency(currency)
-        return depositByCurrency
+      depositTasks.push((async () => {
+        const depositByCurrency = await this.getDepositsByCurrency(currency, 1)
+        if (depositByCurrency.data) {
+          let firstData = depositByCurrency.data.datas
+          firstData = firstData.map((item) => ({
+            amount: item.amount,
+            date: item.createdAt
+          }))
+          const pageNos = depositByCurrency.data.pageNos + 1
+          const pageTasks = []
+          for (let i = 2; i < pageNos; i++) {
+            pageTasks.push((async () => {
+              const depositByCurrencyPage = await this.getDepositsByCurrency(currency, i)
+              if (depositByCurrencyPage.success) {
+                const datas = depositByCurrencyPage.data.datas
+                return datas.map((item) => ({
+                  amount: item.amount,
+                  date: item.createdAt
+                }))
+              }
+              return []
+            })())
+          }
+  
+          const listDeposits = await Promise.all(pageTasks)
+          let data = []
+          listDeposits.forEach((item) => {
+            data = [...data, ...item]
+          })
+
+          data = [...firstData, ...data]
+          
+          return {
+            coin: currency,
+            data
+          }
+        } else {
+          return {
+            coin: currency,
+            data: []
+          }
+        }
       })())
     })
-
+  
     return depositTasks
   }
 
-  getWithdrawByCurrency(currency) {
-    return this.getDepositAndWithdrawalRecords({symbol : currency, type: 'WITHDRAW', status: 'FINISHED'})
+  getWithdrawByCurrency(currency, pageNumber) {
+    return this.getDepositAndWithdrawalRecords({symbol : currency, type: 'WITHDRAW', status: 'FINISHED', page: pageNumber})
   }
 
   getListWithdraws(listCurrencies) {
     const withdrawTasks = []
     listCurrencies.forEach((currency) => {
       withdrawTasks.push((async () => {
-        const withdrawByCurrency = await this.getWithdrawByCurrency(currency)
-        return withdrawByCurrency
+        const withdrawByCurrency = await this.getWithdrawByCurrency(currency, 1)
+        if (withdrawByCurrency.data) {
+          let firstData = withdrawByCurrency.data.datas
+          firstData = firstData.map((item) => ({
+            amount: item.amount,
+            date: item.createdAt
+          }))
+
+          const pageNos = withdrawByCurrency.data.pageNos + 1
+          const pageTasks = []
+          for (let i = 2; i < pageNos; i++) {
+            pageTasks.push((async () => {
+              const withdrawByCurrencyPage = await this.getWithdrawByCurrency(currency, i)
+              if (withdrawByCurrencyPage.success) {
+                const datas = withdrawByCurrencyPage.data.datas
+                return datas.map((item) => ({
+                  amount: item.amount + item.fee,
+                  date: item.createdAt
+                }))
+              }
+              return []
+            })())
+          }
+
+          const listWithdraw = await Promise.all(pageTasks)
+          let data = []
+          listWithdraw.forEach((item) => {
+            data = [...data, ...item]
+          })
+
+          data = [...firstData, ...data]
+
+          return {
+            coin: currency,
+            data
+          }
+        } else {
+          return {
+            coin: currency,
+            data: []
+          }
+        }
       })())
     })
 
     return withdrawTasks
   }
 
-  getOrderHistoryByCurrency(pair) {
-    return this.getDealtOrders({pair}) 
+  getOrderHistoryByCurrency(pair, pageNumber) {
+    return this.getDealtOrders({pair, page: pageNumber}) 
+  }
+
+  processTransactionData(data) {
+    let result = []
+    result = data.map((item) => ({
+      amount: item.amount,
+      fee: item.fee,
+      isBuy: item.direction !== 'SELL',
+      dealPrice: item.dealPrice,
+      dealValue: item.dealValue,
+      time: item.createdAt,
+    }))
+    result = result.map((item) => {
+      let { isBuy, amount, fee, dealValue, dealPrice, time } = item
+      if (isBuy) {
+        amount = amount - fee
+      }
+      dealPrice = (dealValue / amount)
+      return {
+        amount,
+        isBuy,
+        dealPrice,
+        dealValue,
+        time
+      }
+    })
+
+    return result
   }
 
   getOrderHistories(listPairs) {
     const orderHistoryTasks = []
     listPairs.forEach((pair) => {
       orderHistoryTasks.push((async () => {
-        const orderHistoryByCurrency = await this.getOrderHistoryByCurrency(pair)
-        return orderHistoryByCurrency 
+        const orderHistoryByCurrency = await this.getOrderHistoryByCurrency(pair, 1)
+        // page number in there
+        let data = []
+        if (orderHistoryByCurrency.success) {
+          const { pageNos } = orderHistoryByCurrency
+          if (orderHistoryByCurrency.success) {
+            if (+orderHistoryByCurrency.data.total !== 0) {
+              data = orderHistoryByCurrency.data.datas
+            }
+          }
+          data = this.processTransactionData(data)
+
+          const pageTasks = []
+          for (let i = 2; i < pageNos + 1; pageNos++) {
+            pageTasks.push((async () => {
+              const orderHistoryPage = await this.getOrderHistoryByCurrency(pair, i)
+              let data = []
+              if (orderHistoryPage.success) {
+                if (orderHistoryPage.data.total !== 0) {
+                  data = orderHistoryPage.data.datas
+                }
+              }
+              data = this.processTransactionData(data)
+              return data
+            })())
+          }
+
+          const orderHistoriesAll = await Promise.all(pageTasks)
+          orderHistoriesAll.forEach((item) => {
+            data = [...data, ...item]
+          })
+        }
+        return {
+          pair,
+          data
+        }
       })())
     })
 
