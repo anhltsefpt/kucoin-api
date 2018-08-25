@@ -251,7 +251,7 @@ class Kucoin {
   }
 
   getWithdrawByCurrency(currency, pageNumber) {
-    return this.getDepositAndWithdrawalRecords({symbol : currency, type: 'WITHDRAW', status: 'FINISHED', page: pageNumber})
+    return this.getDepositAndWithdrawalRecords({symbol : currency, type: 'WITHDRAW', page: pageNumber})
   }
 
   getListWithdraws(listCurrencies) {
@@ -265,7 +265,6 @@ class Kucoin {
             amount: item.amount,
             date: item.createdAt
           }))
-
           const pageNos = withdrawByCurrency.data.pageNos + 1
           const pageTasks = []
           for (let i = 2; i < pageNos; i++) {
